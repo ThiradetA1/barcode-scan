@@ -3,150 +3,74 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ระบบลงทะเบียนประกันสินค้า</title>
+    <title>Barcode Scanner - ค้นหาข้อมูลสินค้า</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.2/dist/quagga.min.js"></script>
 </head>
 <body>
-    <div class="app-container">
-        <!-- Header -->
+    <div class="app">
         <header>
-            <h1>&#128230; ระบบลงทะเบียนประกันสินค้า</h1>
+            <h1>สแกนบาร์โค้ด</h1>
+            <p>สแกนเพื่อค้นหาข้อมูลสินค้าจากฐานข้อมูลออนไลน์</p>
         </header>
 
-        <!-- Stats -->
-        <section class="stats">
-            <div class="stat-card">
-                <span class="stat-num" id="statTotal">0</span>
-                <span class="stat-label">สินค้าทั้งหมด</span>
+        <!-- Scanner -->
+        <section class="card">
+            <div class="camera-box" id="cameraBox">
+                <div class="scan-line"></div>
             </div>
-            <div class="stat-card active">
-                <span class="stat-num" id="statActive">0</span>
-                <span class="stat-label">ประกันยังไม่หมด</span>
+            <div class="center gap">
+                <button id="btnScan" class="btn">เปิดกล้องสแกน</button>
+                <button id="btnStop" class="btn btn-outline" disabled>ปิด</button>
             </div>
-            <div class="stat-card warning">
-                <span class="stat-num" id="statExpiring">0</span>
-                <span class="stat-label">ใกล้หมดอายุ</span>
+            <div class="divider"><span>หรือ</span></div>
+            <div class="manual">
+                <input id="manualInput" type="text" class="input" placeholder="พิมพ์หรือสแกนบาร์โค้ด เช่น SN12345678 หรือ 8851234567890" maxlength="40">
+                <button id="btnSearch" class="btn">ค้นหา</button>
             </div>
-            <div class="stat-card expired">
-                <span class="stat-num" id="statExpired">0</span>
-                <span class="stat-label">หมดประกันแล้ว</span>
-            </div>
+            <div id="status" class="status"></div>
         </section>
 
-        <!-- Barcode Scanner -->
-        <section class="scanner-section">
-            <h2>สแกนบาร์โค้ด</h2>
-            <div class="scanner-wrapper">
-                <video id="video" autoplay playsinline></video>
-                <div class="scan-region"></div>
+        <!-- Result -->
+        <section id="resultSection" class="card hidden">
+            <div class="barcode-badge">
+                <span class="label">บาร์โค้ด:</span>
+                <span id="barcodeDisplay" class="code"></span>
             </div>
-            <div class="scanner-controls">
-                <button id="btnStartScan" class="btn btn-primary">&#128247; เปิดกล้อง</button>
-                <button id="btnStopScan" class="btn btn-outline" disabled>&#10060; ปิด</button>
-                <input type="text" id="barcodeManual" class="input" placeholder="หรือป้อนเลขบาร์โค้ด..." maxlength="20">
-                <button id="btnSearchBarcode" class="btn btn-primary">&#128269; ค้นหา</button>
-            </div>
-            <div id="scanStatus" class="status-msg"></div>
-        </section>
 
-        <!-- Register / Edit Form -->
-        <section class="form-section" id="formSection">
-            <h2 id="formTitle">ลงทะเบียนสินค้าใหม่</h2>
-            <form id="warrantyForm">
-                <input type="hidden" id="editId">
-
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>เลขบาร์โค้ด</label>
-                        <input type="text" id="barcode" class="input" placeholder="8851234567890" maxlength="20" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Serial Number</label>
-                        <input type="text" id="serial" class="input" placeholder="SN:xxxxxxxx" maxlength="50">
-                    </div>
-                    <div class="form-group span-2">
-                        <label>ชื่อสินค้า *</label>
-                        <input type="text" id="productName" class="input" placeholder="เช่น Corsair Vengeance DDR5 16GB" required>
-                    </div>
-                    <div class="form-group">
-                        <label>ยี่ห้อ / แบรนด์</label>
-                        <input type="text" id="brand" class="input" placeholder="เช่น Corsair">
-                    </div>
-                    <div class="form-group">
-                        <label>รุ่น</label>
-                        <input type="text" id="model" class="input" placeholder="เช่น CMK16GX5M2B5200C16">
-                    </div>
-                    <div class="form-group">
-                        <label>วันที่ซื้อ</label>
-                        <input type="date" id="purchaseDate" class="input">
-                    </div>
-                    <div class="form-group">
-                        <label>ระยะเวลาประกัน (ปี)</label>
-                        <input type="number" id="warrantyYears" class="input" value="1" min="0" max="99" step="1">
-                    </div>
-                    <div class="form-group">
-                        <label>ร้านที่ซื้อ</label>
-                        <input type="text" id="shop" class="input" placeholder="เช่น JIB, Advice, Banana IT">
-                    </div>
-                    <div class="form-group">
-                        <label>ราคา</label>
-                        <input type="text" id="price" class="input" placeholder="เช่น 2,490">
-                    </div>
-                    <div class="form-group span-2">
-                        <label>หมายเหตุ</label>
-                        <textarea id="notes" class="input" rows="2" placeholder="ข้อมูลเพิ่มเติม เช่น เงื่อนไขประกัน"></textarea>
-                    </div>
-                </div>
-
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary" id="btnSave">&#128190; บันทึก</button>
-                    <button type="button" class="btn btn-outline" id="btnClear">&#8635; ล้างฟอร์ม</button>
-                </div>
-            </form>
-        </section>
-
-        <!-- Product Table -->
-        <section class="table-section">
-            <div class="table-header">
-                <h2>รายการสินค้าที่ลงทะเบียน</h2>
-                <div class="table-tools">
-                    <input type="text" id="searchFilter" class="input input-sm" placeholder="&#128269; ค้นหา...">
-                    <button id="btnExport" class="btn btn-sm btn-outline">&#128229; Export CSV</button>
+            <div class="product-head">
+                <img id="productImage" class="product-img" src="" alt="" onerror="this.style.display='none'">
+                <div class="product-head-text">
+                    <h2 id="productName">-</h2>
+                    <p id="productBrand" class="brand">-</p>
+                    <p id="productQuantity" class="qty">-</p>
                 </div>
             </div>
-            <div class="table-wrapper">
-                <table id="productTable">
-                    <thead>
-                        <tr>
-                            <th>บาร์โค้ด</th>
-                            <th>ชื่อสินค้า</th>
-                            <th>Serial</th>
-                            <th>วันที่ซื้อ</th>
-                            <th>วันหมดประกัน</th>
-                            <th>สถานะ</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                        <tr class="empty-row">
-                            <td colspan="7">ยังไม่มีสินค้า &mdash; สแกนบาร์โค้ดเพื่อเริ่มลงทะเบียน</td>
-                        </tr>
-                    </tbody>
-                </table>
+
+            <div class="details-grid" id="detailsGrid"></div>
+
+            <div id="ingredientsBox" class="hidden">
+                <h3>ส่วนประกอบ</h3>
+                <p id="ingredients"></p>
+            </div>
+
+            <div id="nutrientsBox" class="hidden">
+                <h3>ข้อมูลโภชนาการ (ต่อ 100g)</h3>
+                <table id="nutrientsTable"></table>
+            </div>
+
+            <div class="center gap" style="margin-top:16px">
+                <button id="btnScanAgain" class="btn btn-outline">สแกนต่อ</button>
             </div>
         </section>
-    </div>
 
-    <!-- Delete Confirm Modal -->
-    <div class="modal-overlay" id="modalDelete">
-        <div class="modal">
-            <p>ยืนยันการลบรายการนี้?</p>
-            <div class="modal-actions">
-                <button class="btn btn-danger" id="btnConfirmDelete">&#10060; ลบ</button>
-                <button class="btn btn-outline" id="btnCancelDelete">ยกเลิก</button>
-            </div>
-        </div>
+        <!-- History -->
+        <section id="historySection" class="card hidden">
+            <h3>ประวัติการสแกน</h3>
+            <ul id="historyList"></ul>
+        </section>
+
+        <footer>ข้อมูลจาก Open Food Facts, UPCitemdb, และอื่นๆ</footer>
     </div>
 
     <script src="app.js"></script>

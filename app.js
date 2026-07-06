@@ -1,407 +1,321 @@
 (function() {
-    var STORAGE_KEY = 'warranty_products';
 
-    var products = [];
+    /* ---- DOM refs ---- */
+    var btnScan = document.getElementById('btnScan');
+    var btnStop = document.getElementById('btnStop');
+    var btnSearch = document.getElementById('btnSearch');
+    var btnScanAgain = document.getElementById('btnScanAgain');
+    var manualInput = document.getElementById('manualInput');
+    var statusEl = document.getElementById('status');
+    var resultSection = document.getElementById('resultSection');
+    var cameraBox = document.getElementById('cameraBox');
+    var historySection = document.getElementById('historySection');
+    var historyList = document.getElementById('historyList');
 
-    var videoEl = document.getElementById('video');
-    var codeReader = null;
+    /* ---- State ---- */
     var scanning = false;
-    var pendingDeleteId = null;
+    var lastCode = '';
+    var lastCodeTime = 0;
+    var history = [];
 
-    var dom = {
-        statTotal:    document.getElementById('statTotal'),
-        statActive:   document.getElementById('statActive'),
-        statExpiring: document.getElementById('statExpiring'),
-        statExpired:  document.getElementById('statExpired'),
-        btnStartScan: document.getElementById('btnStartScan'),
-        btnStopScan:  document.getElementById('btnStopScan'),
-        barcodeManual:document.getElementById('barcodeManual'),
-        btnSearch:    document.getElementById('btnSearchBarcode'),
-        scanStatus:   document.getElementById('scanStatus'),
-        form:         document.getElementById('warrantyForm'),
-        formTitle:    document.getElementById('formTitle'),
-        editId:       document.getElementById('editId'),
-        barcode:      document.getElementById('barcode'),
-        serial:       document.getElementById('serial'),
-        productName:  document.getElementById('productName'),
-        brand:        document.getElementById('brand'),
-        model:        document.getElementById('model'),
-        purchaseDate: document.getElementById('purchaseDate'),
-        warrantyYears:document.getElementById('warrantyYears'),
-        shop:         document.getElementById('shop'),
-        price:        document.getElementById('price'),
-        notes:        document.getElementById('notes'),
-        btnSave:      document.getElementById('btnSave'),
-        btnClear:     document.getElementById('btnClear'),
-        tableBody:    document.getElementById('tableBody'),
-        searchFilter: document.getElementById('searchFilter'),
-        btnExport:    document.getElementById('btnExport'),
-        modalDelete:  document.getElementById('modalDelete'),
-    };
-
-    /* ===== Storage ===== */
-    var SAMPLE_DATA = [
-        {
-            id: '1719000000001', barcode: '8400066553311', serial: 'SN2401A5B3C001',
-            name: 'Corsair Vengeance DDR5 32GB (2x16GB)', brand: 'Corsair', model: 'CMK32GX5M2B5600C36',
-            purchaseDate: '2026-06-15', warrantyYears: '10', shop: 'JIB', price: '3,990', notes: 'ประกัน Synnex 10 ปี'
-        },
-        {
-            id: '1719000000002', barcode: '4710484742535', serial: 'SN2308K9L2M004',
-            name: 'Samsung 990 PRO 2TB NVMe SSD', brand: 'Samsung', model: 'MZ-V9P2T0BW',
-            purchaseDate: '2026-05-20', warrantyYears: '5', shop: 'Advice', price: '6,900', notes: 'ประกันศูนย์ไทย'
-        },
-        {
-            id: '1719000000003', barcode: '0195553904012', serial: 'SN2501X7Y3Z009',
-            name: 'Intel Core i7-14700K', brand: 'Intel', model: 'BX8071514700K',
-            purchaseDate: '2026-07-01', warrantyYears: '3', shop: 'Banana IT', price: '14,500', notes: ''
-        },
-        {
-            id: '1719000000004', barcode: '0822233100037', serial: 'SN2302H6B8T112',
-            name: 'ASUS TUF RTX 4070 Ti 12GB', brand: 'ASUS', model: 'TUF-RTX4070TI-O12G-GAMING',
-            purchaseDate: '2025-11-10', warrantyYears: '3', shop: 'JIB', price: '29,900', notes: 'ประกัน 3 ปี ลงทะเบียนออนไลน์'
-        },
-        {
-            id: '1719000000005', barcode: '0840109750123', serial: 'SN2407R2P8L055',
-            name: 'WD Black SN850X 4TB NVMe', brand: 'Western Digital', model: 'WDS400T2X0E',
-            purchaseDate: '2025-01-15', warrantyYears: '5', shop: 'JIB', price: '12,500', notes: ''
-        }
-    ];
-
-    function loadProducts() {
-        try {
-            var raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) {
-                products = JSON.parse(raw);
-            } else {
-                products = JSON.parse(JSON.stringify(SAMPLE_DATA));
-                saveProducts();
-            }
-        } catch (e) {
-            products = JSON.parse(JSON.stringify(SAMPLE_DATA));
-        }
+    /* ---- Status ---- */
+    function status(msg, type) {
+        statusEl.textContent = msg;
+        statusEl.className = 'status ' + (type || '');
     }
 
-    function saveProducts() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
-        } catch (e) {
-            setStatus('ไม่สามารถบันทึกข้อมูลได้ (พื้นที่เต็ม)', 'error');
-        }
+    /* ---- History ---- */
+    function loadHistory() {
+        try { history = JSON.parse(localStorage.getItem('barcode_history') || '[]'); } catch(e) { history = []; }
     }
 
-    /* ===== Warranty Status ===== */
-    function getWarrantyStatus(item) {
-        if (!item.purchaseDate || !item.warrantyYears) return { status: 'unknown', label: 'ไม่ระบุ', css: '' };
-        if (parseFloat(item.warrantyYears) === 0) return { status: 'forever', label: 'ตลอดชีพ', css: 'badge-forever' };
-
-        var purchase = new Date(item.purchaseDate);
-        var expiry = new Date(purchase);
-        expiry.setFullYear(expiry.getFullYear() + parseFloat(item.warrantyYears));
-        var today = new Date(); today.setHours(0,0,0,0);
-        var diffDays = Math.ceil((expiry - today) / (1000*60*60*24));
-
-        if (diffDays < 0) return { status: 'expired', label: 'หมดประกัน', css: 'badge-expired', expiry: expiry };
-        if (diffDays <= 30) return { status: 'expiring', label: 'ใกล้หมด ('+diffDays+' วัน)', css: 'badge-expiring', expiry: expiry };
-        return { status: 'active', label: 'ยังไม่หมด', css: 'badge-active', expiry: expiry };
+    function saveHistory() {
+        try { localStorage.setItem('barcode_history', JSON.stringify(history)); } catch(e) {}
     }
 
-    function formatDate(dateStr) {
-        if (!dateStr) return '-';
-        var parts = dateStr.split('-');
-        return parts[2] + '/' + parts[1] + '/' + (parseInt(parts[0]) + 543);
+    function addHistory(code, name) {
+        history = history.filter(function(h) { return h.code !== code; });
+        history.unshift({ code: code, name: name || '-', time: new Date().toLocaleString('th-TH') });
+        if (history.length > 30) history.length = 30;
+        saveHistory();
+        renderHistory();
     }
 
-    function formatDateShort(dateObj) {
-        if (!dateObj) return '-';
-        var d = dateObj.getDate();
-        var m = dateObj.getMonth() + 1;
-        var y = dateObj.getFullYear() + 543;
-        return (d<10?'0':'') + d + '/' + (m<10?'0':'') + m + '/' + y;
-    }
-
-    /* ===== Render ===== */
-    function renderAll() {
-        renderTable();
-        renderStats();
-    }
-
-    function renderStats() {
-        var total = products.length;
-        var active = 0, expiring = 0, expired = 0;
-
-        products.forEach(function(p) {
-            var ws = getWarrantyStatus(p);
-            if (ws.status === 'active' || ws.status === 'forever') active++;
-            else if (ws.status === 'expiring') expiring++;
-            else if (ws.status === 'expired') expired++;
-        });
-
-        dom.statTotal.textContent = total;
-        dom.statActive.textContent = active;
-        dom.statExpiring.textContent = expiring;
-        dom.statExpired.textContent = expired;
-    }
-
-    function renderTable(filterText) {
-        var list = products;
-        if (filterText) {
-            var ft = filterText.toLowerCase();
-            list = products.filter(function(p) {
-                return (p.barcode && p.barcode.toLowerCase().indexOf(ft) >= 0) ||
-                       (p.name && p.name.toLowerCase().indexOf(ft) >= 0) ||
-                       (p.serial && p.serial.toLowerCase().indexOf(ft) >= 0) ||
-                       (p.brand && p.brand.toLowerCase().indexOf(ft) >= 0);
-            });
-        }
-
-        if (list.length === 0) {
-            dom.tableBody.innerHTML = '<tr class="empty-row"><td colspan="7">' +
-                (filterText ? 'ไม่พบรายการที่ค้นหา' : 'ยังไม่มีสินค้า &mdash; สแกนบาร์โค้ดเพื่อเริ่มลงทะเบียน') +
-                '</td></tr>';
-            return;
-        }
-
-        dom.tableBody.innerHTML = list.map(function(p) {
-            var ws = getWarrantyStatus(p);
-            var expiryStr = ws.expiry ? formatDateShort(ws.expiry) : (p.warrantyYears == 0 ? 'ตลอดชีพ' : '-');
-            return '<tr>' +
-                '<td>' + (p.barcode || '-') + '</td>' +
-                '<td><strong>' + escapeHtml(p.name || '-') + '</strong>' +
-                    (p.brand ? '<br><small>' + escapeHtml(p.brand) + '</small>' : '') + '</td>' +
-                '<td>' + (p.serial || '-') + '</td>' +
-                '<td>' + formatDate(p.purchaseDate) + '</td>' +
-                '<td>' + expiryStr + '</td>' +
-                '<td><span class="badge ' + ws.css + '">' + ws.label + '</span></td>' +
-                '<td>' +
-                    '<button class="btn btn-xs btn-outline" data-action="edit" data-id="' + p.id + '">&#9998;</button> ' +
-                    '<button class="btn btn-xs btn-danger" data-action="delete" data-id="' + p.id + '">&#10005;</button>' +
-                '</td>' +
-                '</tr>';
+    function renderHistory() {
+        if (!history.length) { historySection.classList.add('hidden'); return; }
+        historySection.classList.remove('hidden');
+        historyList.innerHTML = history.map(function(h) {
+            return '<li data-code="' + h.code + '">' +
+                '<span class="h-code">' + h.code + '</span>' +
+                '<span class="h-name">' + esc(h.name) + '</span>' +
+                '<span class="h-time">' + h.time + '</span>' +
+                '</li>';
         }).join('');
+        historyList.querySelectorAll('li').forEach(function(li) {
+            li.addEventListener('click', function() { lookup(this.dataset.code); });
+        });
     }
 
-    function escapeHtml(str) {
-        var div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-    /* ===== Form ===== */
-    function resetForm() {
-        dom.form.reset();
-        dom.editId.value = '';
-        dom.formTitle.textContent = 'ลงทะเบียนสินค้าใหม่';
-        dom.btnSave.textContent = '\uD83D\uDCBE บันทึก';
-        dom.purchaseDate.value = new Date().toISOString().split('T')[0];
-        dom.warrantyYears.value = 1;
-    }
-
-    function fillForm(product) {
-        dom.editId.value = product.id;
-        dom.barcode.value = product.barcode || '';
-        dom.serial.value = product.serial || '';
-        dom.productName.value = product.name || '';
-        dom.brand.value = product.brand || '';
-        dom.model.value = product.model || '';
-        dom.purchaseDate.value = product.purchaseDate || '';
-        dom.warrantyYears.value = product.warrantyYears != null ? product.warrantyYears : 1;
-        dom.shop.value = product.shop || '';
-        dom.price.value = product.price || '';
-        dom.notes.value = product.notes || '';
-        dom.formTitle.textContent = 'แก้ไขข้อมูลสินค้า';
-        dom.btnSave.textContent = '\uD83D\uDCBE อัปเดต';
-        dom.formSection.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function submitForm(e) {
-        e.preventDefault();
-        var id = dom.editId.value;
-        var data = {
-            id: id || Date.now().toString(),
-            barcode: dom.barcode.value.trim(),
-            serial: dom.serial.value.trim(),
-            name: dom.productName.value.trim(),
-            brand: dom.brand.value.trim(),
-            model: dom.model.value.trim(),
-            purchaseDate: dom.purchaseDate.value,
-            warrantyYears: dom.warrantyYears.value,
-            shop: dom.shop.value.trim(),
-            price: dom.price.value.trim(),
-            notes: dom.notes.value.trim(),
-        };
-
-        if (!data.name) {
-            setStatus('กรุณากรอกชื่อสินค้า', 'error');
-            return;
-        }
-
-        if (id) {
-            var idx = products.findIndex(function(p) { return p.id === id; });
-            if (idx >= 0) products[idx] = data;
-        } else {
-            products.unshift(data);
-        }
-
-        saveProducts();
-        renderAll();
-        resetForm();
-        setStatus('บันทึกข้อมูลเรียบร้อย', 'success');
-    }
-
-    /* ===== Delete ===== */
-    function showDeleteModal(id) {
-        pendingDeleteId = id;
-        dom.modalDelete.classList.add('show');
-    }
-
-    function confirmDelete() {
-        if (!pendingDeleteId) return;
-        products = products.filter(function(p) { return p.id !== pendingDeleteId; });
-        pendingDeleteId = null;
-        dom.modalDelete.classList.remove('show');
-        saveProducts();
-        renderAll();
-        resetForm();
-        setStatus('ลบรายการเรียบร้อย', 'success');
-    }
-
-    /* ===== Scan ===== */
-    function onBarcodeFound(barcode) {
-        setStatus('พบ: ' + barcode, 'success');
-        var existing = products.find(function(p) { return p.barcode === barcode; });
-        if (existing) {
-            fillForm(existing);
-            setStatus('พบข้อมูลในระบบแล้ว กำลังแสดง...', 'success');
-        } else {
-            resetForm();
-            dom.barcode.value = barcode;
-            dom.formTitle.textContent = 'ลงทะเบียนสินค้าใหม่';
-            dom.formSection.scrollIntoView({ behavior: 'smooth' });
-            setStatus('บาร์โค้ดใหม่ กรุณากรอกข้อมูล', 'success');
-        }
-        stopScan();
-    }
-
-    function startScan() {
+    /* ---- Scanner (Quagga2) ---- */
+    function startScanner() {
         if (scanning) return;
-        codeReader = new ZXing.BrowserMultiFormatReader();
+        if (typeof Quagga === 'undefined') { status('Cannot load scanner library', 'error'); return; }
+
         scanning = true;
-        setStatus('กำลังเปิดกล้อง...', '');
-        dom.btnStartScan.disabled = true;
-        dom.btnStopScan.disabled = false;
+        status('กำลังเปิดกล้อง...', 'info');
+        cameraBox.classList.add('scanning');
+        btnScan.disabled = true;
+        btnStop.disabled = false;
 
-        codeReader.decodeFromVideoDevice(null, 'video', function(result, err) {
-            if (result && scanning) {
-                onBarcodeFound(result.text);
+        Quagga.init({
+            inputStream: {
+                name: 'Live',
+                type: 'LiveStream',
+                target: cameraBox,
+                constraints: { facingMode: 'environment', width: { min: 640 }, height: { min: 480 } }
+            },
+            locator: { patchSize: 'medium', halfSample: true },
+            numOfWorkers: 2,
+            decoder: { readers: ['ean_reader','ean_8_reader','upc_reader','upc_e_reader','code_128_reader','code_39_reader','code_93_reader'] },
+            locate: true
+        }, function(err) {
+            if (err) { status('เปิดกล้องไม่สำเร็จ: ' + err, 'error'); stopScanner(); return; }
+            Quagga.start();
+            status('กำลังสแกน... เล็งกล้องไปที่บาร์โค้ด', 'info');
+        });
+
+        Quagga.onDetected(function(r) {
+            var code = r && r.codeResult && r.codeResult.code;
+            if (code) {
+                var now = Date.now();
+                if (code === lastCode && now - lastCodeTime < 2500) return;
+                lastCode = code;
+                lastCodeTime = now;
+                lookup(code);
+                stopScanner();
             }
-            if (err && !(err instanceof ZXing.NotFoundException)) {
-                // ignore NotFound
-            }
-        }).catch(function(err) {
-            setStatus('ไม่สามารถเปิดกล้องได้: ' + err.message, 'error');
-            scanning = false;
-            dom.btnStartScan.disabled = false;
-            dom.btnStopScan.disabled = true;
         });
     }
 
-    function stopScan() {
+    function stopScanner() {
         scanning = false;
-        if (codeReader) {
-            codeReader.reset();
-            codeReader = null;
+        cameraBox.classList.remove('scanning');
+        btnScan.disabled = false;
+        btnStop.disabled = true;
+        if (typeof Quagga !== 'undefined') { Quagga.stop(); }
+    }
+
+    /* ---- Manual input ---- */
+    function manualSearch() {
+        var code = manualInput.value.trim();
+        if (!code) { status('พิมพ์เลขบาร์โค้ดก่อน', 'error'); return; }
+        if (!/^[A-Za-z0-9\-_]+$/.test(code)) { status('รูปแบบบาร์โค้ดไม่ถูกต้อง', 'error'); return; }
+        manualInput.value = '';
+        lookup(code);
+    }
+
+    /* ---- Product lookup ---- */
+    function lookup(code) {
+        status('กำลังค้นหา ' + code + '...', 'info');
+        showLoading();
+        resultSection.classList.remove('hidden');
+
+        fetchProduct(code);
+    }
+
+    function fetchProduct(code) {
+        fetch('https://world.openfoodfacts.org/api/v2/product/' + code + '.json')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 1 && data.product) {
+                    showProduct(code, data.product);
+                } else {
+                    fetchUPCitemdb(code);
+                }
+            })
+            .catch(function() {
+                fetchUPCitemdb(code);
+            });
+    }
+
+    function fetchUPCitemdb(code) {
+        fetch('https://api.upcitemdb.com/prod/trial/lookup?upc=' + code)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.items && data.items.length > 0) {
+                    var item = data.items[0];
+                    showProductUP(code, item);
+                } else {
+                    showNoResult(code);
+                }
+            })
+            .catch(function() {
+                showNoResult(code);
+            });
+    }
+
+    function showNoResult(code) {
+        document.getElementById('barcodeDisplay').textContent = code;
+        document.getElementById('productName').textContent = 'ไม่พบข้อมูลสินค้า';
+        document.getElementById('productBrand').textContent = 'ลองค้นหาด้วยบาร์โค้ดอื่น';
+        document.getElementById('productQuantity').textContent = '';
+        document.getElementById('productImage').style.display = 'none';
+        document.getElementById('detailsGrid').innerHTML = '';
+        document.getElementById('ingredientsBox').classList.add('hidden');
+        document.getElementById('nutrientsBox').classList.add('hidden');
+        status('ไม่พบข้อมูลสำหรับ ' + code, 'error');
+        addHistory(code, 'ไม่พบข้อมูล');
+    }
+
+    function showLoading() {
+        document.getElementById('barcodeDisplay').textContent = '';
+        document.getElementById('productName').textContent = 'กำลังค้นหา...';
+        document.getElementById('productBrand').textContent = '';
+        document.getElementById('productQuantity').textContent = '';
+        document.getElementById('productImage').style.display = 'none';
+        document.getElementById('detailsGrid').innerHTML = '';
+        document.getElementById('ingredientsBox').classList.add('hidden');
+        document.getElementById('nutrientsBox').classList.add('hidden');
+    }
+
+    /* ---- Display product (Open Food Facts) ---- */
+    function showProduct(code, p) {
+        document.getElementById('barcodeDisplay').textContent = code;
+
+        var name = p.product_name_th || p.product_name || p.generic_name_th || p.generic_name || 'ไม่ทราบชื่อ';
+        document.getElementById('productName').textContent = name;
+
+        var brand = p.brands || '';
+        document.getElementById('productBrand').textContent = brand;
+
+        var qty = p.quantity || '';
+        document.getElementById('productQuantity').textContent = qty;
+
+        var img = document.getElementById('productImage');
+        if (p.image_front_url || p.image_url) {
+            img.src = p.image_front_url || p.image_url;
+            img.style.display = 'block';
+        } else {
+            img.style.display = 'none';
         }
-        var stream = videoEl.srcObject;
-        if (stream) {
-            stream.getTracks().forEach(function(t) { t.stop(); });
-            videoEl.srcObject = null;
+
+        var details = [];
+        addDetail(details, 'ประเภท', cats(p));
+        addDetail(details, 'ประเทศ', p.countries);
+        addDetail(details, 'ร้าน', p.stores);
+        addDetail(details, 'ฉลาก/มาตรฐาน', p.labels);
+        addDetail(details, 'บรรจุภัณฑ์', p.packaging);
+        if (p.nutriscore_grade) addDetail(details, 'Nutri-Score', p.nutriscore_grade.toUpperCase());
+        if (p.ecoscore_grade) addDetail(details, 'Eco-Score', p.ecoscore_grade.toUpperCase());
+        if (p.nova_group) addDetail(details, 'NOVA Group', p.nova_group);
+
+        document.getElementById('detailsGrid').innerHTML = details.map(function(d) {
+            return '<div class="detail-item"><span class="detail-label">' + d[0] + '</span><span class="detail-value">' + d[1] + '</span></div>';
+        }).join('');
+
+        var ing = document.getElementById('ingredientsBox');
+        var ingText = document.getElementById('ingredients');
+        var ingStr = p.ingredients_text_th || p.ingredients_text || p.ingredients_text_en || '';
+        if (ingStr) {
+            ing.classList.remove('hidden');
+            ingText.textContent = ingStr;
+        } else {
+            ing.classList.add('hidden');
         }
-        dom.btnStartScan.disabled = false;
-        dom.btnStopScan.disabled = true;
-    }
 
-    function searchByBarcode() {
-        var barcode = dom.barcodeManual.value.trim();
-        if (!barcode) { setStatus('กรุณาป้อนเลขบาร์โค้ด', 'error'); return; }
-        if (!/^[\w-]+$/.test(barcode)) { setStatus('รูปแบบบาร์โค้ดไม่ถูกต้อง', 'error'); return; }
-        onBarcodeFound(barcode);
-    }
-
-    function setStatus(msg, type) {
-        dom.scanStatus.textContent = msg;
-        dom.scanStatus.className = 'status-msg ' + (type || '');
-    }
-
-    /* ===== Export ===== */
-    function exportCSV() {
-        if (products.length === 0) { alert('ไม่มีข้อมูลที่จะ export'); return; }
-
-        var header = ['Barcode','ชื่อสินค้า','Serial','ยี่ห้อ','รุ่น','วันที่ซื้อ','ประกัน(ปี)','วันหมดประกัน','ร้าน','ราคา','หมายเหตุ'];
-        var rows = products.map(function(p) {
-            var ws = getWarrantyStatus(p);
-            return [
-                p.barcode || '', '"' + (p.name || '').replace(/"/g,'""') + '"',
-                p.serial || '', '"' + (p.brand || '').replace(/"/g,'""') + '"',
-                '"' + (p.model || '').replace(/"/g,'""') + '"',
-                p.purchaseDate || '',
-                p.warrantyYears || '',
-                ws.expiry ? formatDateShort(ws.expiry) : '',
-                '"' + (p.shop || '').replace(/"/g,'""') + '"',
-                p.price || '',
-                '"' + (p.notes || '').replace(/"/g,'""') + '"'
-            ].join(',');
+        var nutBox = document.getElementById('nutrientsBox');
+        var nutTable = document.getElementById('nutrientsTable');
+        var nuts = (p.nutriments || {});
+        var nutRows = [];
+        var nutDefs = [
+            ['energy-kcal','พลังงาน','kcal'],
+            ['fat','ไขมัน','g'],
+            ['saturated-fat','ไขมันอิ่มตัว','g'],
+            ['carbohydrates','คาร์โบไฮเดรต','g'],
+            ['sugars','น้ำตาล','g'],
+            ['fiber','ใยอาหาร','g'],
+            ['proteins','โปรตีน','g'],
+            ['salt','เกลือ','g'],
+            ['sodium','โซเดียม','g']
+        ];
+        nutDefs.forEach(function(nd) {
+            var key = nd[0];
+            var val100g = nuts[key + '_100g'];
+            if (val100g !== undefined && val100g !== null) {
+                nutRows.push('<tr><td>' + nd[1] + '</td><td>' + Number(val100g).toFixed(1) + ' ' + nd[2] + '</td></tr>');
+            }
         });
+        if (nutRows.length > 0) {
+            nutBox.classList.remove('hidden');
+            nutTable.innerHTML = nutRows.join('');
+        } else {
+            nutBox.classList.add('hidden');
+        }
 
-        var csv = '\uFEFF' + header.join(',') + '\n' + rows.join('\n');
-        var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'warranty_' + new Date().toISOString().split('T')[0] + '.csv';
-        a.click();
-        URL.revokeObjectURL(url);
+        status('พบข้อมูล :)', 'success');
+        addHistory(code, name);
+        resultSection.scrollIntoView({ behavior: 'smooth' });
     }
 
-    /* ===== Events ===== */
-    dom.btnStartScan.addEventListener('click', startScan);
-    dom.btnStopScan.addEventListener('click', stopScan);
-    dom.btnSearch.addEventListener('click', searchByBarcode);
-    dom.barcodeManual.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchByBarcode(); });
+    /* ---- Display product (UPCitemdb) ---- */
+    function showProductUP(code, item) {
+        document.getElementById('barcodeDisplay').textContent = code;
+        document.getElementById('productName').textContent = item.title || 'ไม่ทราบชื่อ';
+        document.getElementById('productBrand').textContent = item.brand || '';
+        document.getElementById('productQuantity').textContent = item.size || item.weight || '';
 
-    dom.form.addEventListener('submit', submitForm);
-    dom.btnClear.addEventListener('click', function() { resetForm(); setStatus('', ''); });
-
-    dom.tableBody.addEventListener('click', function(e) {
-        var btn = e.target.closest('button');
-        if (!btn) return;
-        var id = btn.dataset.id;
-        var action = btn.dataset.action;
-        if (action === 'edit') {
-            var product = products.find(function(p) { return p.id === id; });
-            if (product) fillForm(product);
-        } else if (action === 'delete') {
-            showDeleteModal(id);
+        var img = document.getElementById('productImage');
+        if (item.images && item.images.length > 0) {
+            img.src = item.images[0];
+            img.style.display = 'block';
+        } else {
+            img.style.display = 'none';
         }
-    });
 
-    dom.searchFilter.addEventListener('input', function() {
-        renderTable(this.value);
-    });
+        var details = [];
+        addDetail(details, 'ประเภท', item.category);
+        addDetail(details, 'รุ่น', item.model);
+        addDetail(details, 'สี', item.color);
+        addDetail(details, 'ร้าน', item.vendor);
+        addDetail(details, 'ประเทศ', item.country);
+        if (item.lowest_recorded_price) addDetail(details, 'ราคาต่ำสุด', '$' + item.lowest_recorded_price);
+        if (item.highest_recorded_price) addDetail(details, 'ราคาสูงสุด', '$' + item.highest_recorded_price);
 
-    dom.btnExport.addEventListener('click', exportCSV);
+        document.getElementById('detailsGrid').innerHTML = details.map(function(d) {
+            return '<div class="detail-item"><span class="detail-label">' + d[0] + '</span><span class="detail-value">' + d[1] + '</span></div>';
+        }).join('');
 
-    document.getElementById('btnConfirmDelete').addEventListener('click', confirmDelete);
-    document.getElementById('btnCancelDelete').addEventListener('click', function() {
-        pendingDeleteId = null;
-        dom.modalDelete.classList.remove('show');
-    });
-    dom.modalDelete.addEventListener('click', function(e) {
-        if (e.target === dom.modalDelete) { pendingDeleteId = null; dom.modalDelete.classList.remove('show'); }
-    });
+        document.getElementById('ingredientsBox').classList.add('hidden');
+        document.getElementById('nutrientsBox').classList.add('hidden');
 
-    /* ===== Init ===== */
-    loadProducts();
-    resetForm();
-    renderAll();
+        status('พบข้อมูล :)', 'success');
+        addHistory(code, item.title || 'ไม่ทราบชื่อ');
+        resultSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cats(p) {
+        var tags = p.categories_tags || [];
+        return tags.map(function(t) { return t.replace(/^[a-z]{2}:/,''); }).slice(0,3).join(', ') || '-';
+    }
+
+    function addDetail(arr, label, val) {
+        if (val && String(val).trim()) arr.push([label, String(val).trim()]);
+    }
+
+    /* ---- Events ---- */
+    btnScan.addEventListener('click', startScanner);
+    btnStop.addEventListener('click', stopScanner);
+    btnSearch.addEventListener('click', manualSearch);
+    btnScanAgain.addEventListener('click', function() {
+        resultSection.classList.add('hidden');
+        status('', '');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    manualInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') manualSearch(); });
+
+    /* ---- Init ---- */
+    loadHistory();
+    renderHistory();
 })();
